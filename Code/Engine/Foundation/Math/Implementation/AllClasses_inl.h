@@ -211,7 +211,7 @@ template <typename Type>
 void ezMat3Template<Type>::SetLookInDirectionMatrix(ezVec3Template<Type> vLookDir, ezVec3Template<Type> vUpDir)
 {
   EZ_ASSERT_DEBUG(!vLookDir.IsZero(), "The look direction must not be zero.");
-  EZ_ASSERT_DEBUG(vUpDir.IsNormalized(), "The up-direction must be normalized.");
+  EZ_ASSERT_DEBUG(vUpDir.IsNormalized(0.002f), "The up-direction must be normalized.");
 
   vLookDir.NormalizeIfNotZero();
 
