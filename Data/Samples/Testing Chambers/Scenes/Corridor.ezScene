@@ -11,7 +11,7 @@ o
 		s %AssetType{"Scene"}
 		VarArray %Dependencies{}
 		Uuid %DocumentID{u4{7297922959506964864,5177324930371449723}}
-		u4 %Hash{12775052912773885317}
+		u4 %Hash{12128711241177101315}
 		VarArray %MetaInfo{}
 		VarArray %Outputs{}
 		VarArray %References
@@ -4036,7 +4036,7 @@ o
 	{
 		b %Active{1}
 		f %ArriveDistance{0x00000040}
-		f %MaxForce{0x00002041}
+		f %MaxForce{0x00004842}
 		f %ScanningDistance{0x0000A041}
 	}
 }

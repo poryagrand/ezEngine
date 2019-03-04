@@ -48,7 +48,8 @@ public:
   void Update();
 
 protected:
-  ezVec3 FindBestDirection(ezPhysicsWorldModuleInterface* pPhysicsInterface, const ezVec3& vPos, const ezVec3& vForward) const;
+  ezVec3 FindBestDirection(ezPhysicsWorldModuleInterface* pPhysicsInterface, const ezVec3& vPos, const ezVec3& vTarget) const;
+  float ComputeBestLength(ezPhysicsWorldModuleInterface* pPhysicsInterface, const ezVec3& vStart, const ezVec3& vSideDir, float fSideDist, const ezVec3& vForwardDir) const;
 
   float m_fSpeedForce = 10.0f;
   float m_fArriveDistance = 2.0f;

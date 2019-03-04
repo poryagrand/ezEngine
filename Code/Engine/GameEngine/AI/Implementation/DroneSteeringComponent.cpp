@@ -45,7 +45,7 @@ void ezDroneSteeringComponentManager::Update(const ezWorldModule::UpdateContext&
   {
     if (it->IsActive())
     {
-      if (tNow - it->m_LastUpdate > ezTime::Seconds(0.1))
+      //if (tNow - it->m_LastUpdate > ezTime::Seconds(0.1))
       {
         it->m_LastUpdate = tNow;
         it->ScanArea(m_pPhysicsInterface);
@@ -115,7 +115,7 @@ void ezDroneSteeringComponent::ScanArea(ezPhysicsWorldModuleInterface* pPhysicsI
   const ezVec3 vFuturePos = vCurPos + pOwner->GetVelocity(); // position in one second
 
   float fClosestTargetSQR = ezMath::BasicType<float>::MaxValue();
-  ezVec3 vBestTarget(0);
+  m_vCurrentTargetPosition = pOwner->GetGlobalPosition();
 
   for (auto it = pManager->GetComponents(); it.IsValid(); it.Next())
   {
@@ -126,23 +126,23 @@ void ezDroneSteeringComponent::ScanArea(ezPhysicsWorldModuleInterface* pPhysicsI
     if (fDistToObjSQR < fClosestTargetSQR)
     {
       fClosestTargetSQR = fDistToObjSQR;
-      vBestTarget = vObjPos;
+      m_vCurrentTargetPosition = vObjPos;
     }
   }
 
   if (fClosestTargetSQR > ezMath::Square(m_fScanningDistance))
     return;
 
-  m_vLastFlyDir = FindBestDirection(pPhysicsInterface, vCurPos, vBestTarget - vFuturePos);
+  m_vLastFlyDir = FindBestDirection(pPhysicsInterface, vCurPos, m_vCurrentTargetPosition);
 }
 
 void ezDroneSteeringComponent::Update()
 {
-  if (m_vLastFlyDir.GetLength() <= m_fArriveDistance)
-    return;
-
   ezGameObject* pOwner = GetOwner();
   const ezVec3 vCurPos = pOwner->GetGlobalPosition();
+
+  if ((m_vCurrentTargetPosition - vCurPos).GetLengthSquared() <= ezMath::Square(m_fArriveDistance))
+    return;
 
   // apply force to self for steering
 
@@ -154,105 +154,106 @@ void ezDroneSteeringComponent::Update()
 }
 
 ezVec3 ezDroneSteeringComponent::FindBestDirection(
-  ezPhysicsWorldModuleInterface* pPhysicsInterface, const ezVec3& vPos, const ezVec3& vForward) const
+  ezPhysicsWorldModuleInterface* pPhysicsInterface, const ezVec3& vPos, const ezVec3& vTarget) const
 {
-  const float fOrgLen = vForward.GetLength();
-  const float fCastLen = ezMath::Min(fOrgLen, 10.0f);
-
-  const ezVec3 vDir = vForward / fOrgLen;
-
-  struct Whisker
-  {
-    ezQuat m_Rotation;
-    ezVec3 m_vWhiskerDir;
-  };
-
   ezStaticArray<ezDebugRenderer::Line, 16> linesRed;
   ezStaticArray<ezDebugRenderer::Line, 16> linesGreen;
   ezStaticArray<ezDebugRenderer::Line, 16> linesYellow;
 
-  ezStaticArray<Whisker, 16> whiskers;
+  const ezVec3 vDirToTarget = vTarget - vPos;
+  const float fDistanceToTarget = vDirToTarget.GetLength();
+  const ezVec3 vDirToTargetNorm = vDirToTarget / fDistanceToTarget;
 
-  whiskers.ExpandAndGetRef().m_Rotation.SetIdentity();
-
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 0, 1), ezAngle::Degree(+10));
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 0, 1), ezAngle::Degree(-10));
-
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 1, 0), ezAngle::Degree(+10));
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 1, 0), ezAngle::Degree(-10));
-
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 0, 1), ezAngle::Degree(+25));
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 0, 1), ezAngle::Degree(-25));
-
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 0, 1), ezAngle::Degree(+45));
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 0, 1), ezAngle::Degree(-45));
-
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 1, 0), ezAngle::Degree(+25));
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 1, 0), ezAngle::Degree(-25));
-
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 1, 0), ezAngle::Degree(+45));
-  whiskers.ExpandAndGetRef().m_Rotation.SetFromAxisAndAngle(ezVec3(0, 1, 0), ezAngle::Degree(-45));
-
-  ezUInt32 uiBestWhisker = 0xFFFFFFFF;
-  float fBestWhiskerLength = 0.0f;
-
-  for (ezUInt32 i = 0; i < whiskers.GetCount(); ++i)
-  {
-    auto& w = whiskers[i];
-
-    w.m_vWhiskerDir = w.m_Rotation * vDir;
-
-    ezPhysicsHitResult res;
-    if (!pPhysicsInterface->CastRay(vPos, w.m_vWhiskerDir, fCastLen, 0, res, ezPhysicsShapeType::Static))
-    {
-      if (fCastLen > fBestWhiskerLength)
-      {
-        uiBestWhisker = i;
-        fBestWhiskerLength = fCastLen * 2.0f;
-      }
-
-      if (!cvar_AiVisSteering)
-        break;
-
-      auto& l = linesYellow.ExpandAndGetRef();
-      l.m_start = vPos;
-      l.m_end = vPos + w.m_vWhiskerDir * fCastLen;
-    }
-    else
-    {
-      auto& l = linesRed.ExpandAndGetRef();
-      l.m_start = vPos;
-      l.m_end = res.m_vPosition;
-
-      if (res.m_fDistance > fBestWhiskerLength)
-      {
-        uiBestWhisker = i;
-        fBestWhiskerLength = res.m_fDistance;
-      }
-    }
-  }
-
-  if (uiBestWhisker == 0xFFFFFFFF)
-  {
-    uiBestWhisker = 0;
-
-    auto& l = linesYellow.ExpandAndGetRef();
-    l.m_start = vPos;
-    l.m_end = vPos + whiskers[uiBestWhisker].m_vWhiskerDir * fCastLen;
-  }
-  else
+  ezPhysicsHitResult res;
+  if (!pPhysicsInterface->CastRay(vPos, vDirToTargetNorm, fDistanceToTarget, 0, res, ezPhysicsShapeType::Static))
   {
     auto& l = linesGreen.ExpandAndGetRef();
     l.m_start = vPos;
-    l.m_end = vPos + whiskers[uiBestWhisker].m_vWhiskerDir * fCastLen;
-  }
-
-  if (cvar_AiVisSteering)
-  {
+    l.m_end = vPos + vDirToTargetNorm;
     ezDebugRenderer::DrawLines(GetWorld(), linesGreen, ezColor::Lime);
-    ezDebugRenderer::DrawLines(GetWorld(), linesYellow, ezColor::Yellow);
-    ezDebugRenderer::DrawLines(GetWorld(), linesRed, ezColor::Red);
+
+    return vDirToTargetNorm;
   }
 
-  return whiskers[uiBestWhisker].m_vWhiskerDir * fOrgLen;
+  ezVec3 vForwardDir = (vTarget - vPos);
+  vForwardDir.z = 0;
+  vForwardDir.NormalizeIfNotZero(ezVec3(1, 0, 0));
+
+  const float fCastLength = 5.0f;
+
+  if (!pPhysicsInterface->CastRay(vPos, vForwardDir, fCastLength, 0, res, ezPhysicsShapeType::Static))
+  {
+    auto& l = linesGreen.ExpandAndGetRef();
+    l.m_start = vPos;
+    l.m_end = vPos + vForwardDir;
+    ezDebugRenderer::DrawLines(GetWorld(), linesGreen, ezColor::Lime);
+
+    return vForwardDir;
+  }
+
+  const ezVec3 vUpDir(0, 0, 1);
+  const ezVec3 vRightDir = vForwardDir.CrossRH(vUpDir).GetNormalized();
+
+  ezVec3 vSideDirs[4] = {-vUpDir, vUpDir, -vRightDir, vRightDir};
+  float fBestPrio = 0;
+  ezInt32 iBestPrio = -1;
+
+  for (ezUInt32 i = 0; i < 4; ++i)
+  {
+    float fSideDistance = fCastLength;
+
+    ezPhysicsHitResult res;
+    if (pPhysicsInterface->CastRay(vPos, vSideDirs[i], fCastLength, 0, res, ezPhysicsShapeType::Static))
+      fSideDistance = res.m_fDistance;
+
+    auto& l = linesYellow.ExpandAndGetRef();
+    l.m_start = vPos;
+    l.m_end = vPos + vSideDirs[i] * fSideDistance;
+
+    const float fPrio = ComputeBestLength(pPhysicsInterface, vPos, vSideDirs[i], fSideDistance, vForwardDir);
+
+    if (fPrio > fBestPrio)
+    {
+      fBestPrio = fPrio;
+      iBestPrio = i;
+    }
+  }
+
+  ezDebugRenderer::DrawLines(GetWorld(), linesYellow, ezColor::Yellow);
+
+  if (iBestPrio < 0)
+    return ezVec3::ZeroVector();
+
+  auto& l = linesGreen.ExpandAndGetRef();
+  l.m_start = vPos;
+  l.m_end = vPos + vSideDirs[iBestPrio];
+
+  ezDebugRenderer::DrawLines(GetWorld(), linesGreen, ezColor::Lime);
+
+  return vSideDirs[iBestPrio];
+}
+
+float ezDroneSteeringComponent::ComputeBestLength(ezPhysicsWorldModuleInterface* pPhysicsInterface, const ezVec3& vStart,
+  const ezVec3& vSideDir, float fSideDist, const ezVec3& vForwardDir) const
+{
+  const float fCastLength = 5.0f;
+
+  float fBestLength = -fCastLength;
+  for (float f = 1.0f; f < fSideDist; f += 1.0f)
+  {
+    const ezVec3 start = vStart + vSideDir * f;
+
+    ezPhysicsHitResult res;
+    if (pPhysicsInterface->CastRay(start, vForwardDir, fCastLength, 0, res, ezPhysicsShapeType::Static))
+    {
+      if (res.m_fDistance - f > fBestLength)
+        fBestLength = res.m_fDistance - f;
+    }
+    else
+    {
+      return fCastLength - f;
+    }
+  }
+
+  return fBestLength;
 }
