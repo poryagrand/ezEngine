@@ -118,7 +118,7 @@ public:
   /// \brief Initializes the VR system. This can be quite time consuming
   /// as it will generally start supporting applications needed to run
   /// and start up the HMD if it went to sleep.
-  virtual bool Initialize() = 0;
+  virtual ezResult Initialize() = 0;
   /// \brief Shuts down the VR system again.
   virtual void Deinitialize() = 0;
   /// \brief Returns whether the VR system is initialized.
