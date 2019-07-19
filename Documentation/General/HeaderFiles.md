@@ -280,7 +280,7 @@ The Pimpl pattern can also be implemented by using inheritance instead of a forw
 class ezTexture2D
 {
 public:
-    ezUniquePtr<ezTexture2D> Make(); // factory function, could also return a shared ptr.
+    static ezUniquePtr<ezTexture2D> Make(); // factory function, could also return a shared ptr.
     virtual ~ezTexture2D();
     void Bind();
 
@@ -342,6 +342,8 @@ We can also place an opaque array of bytes large enough to store our implementat
 class ezTexture2D
 {
 public:
+    ezTexture2D();
+    ~ezTexture2D();
     void Bind();
 
 private:
@@ -371,6 +373,18 @@ struct ezTexture2DImpl
 
 static_assert(sizeof(ezTexture2D::Impl) == sizeof(ezTexture2DImpl), "ezTexture2D::Impl has incorrect size");
 static_assert(alignof(ezTexture2D::Impl) == alignof(ezTexture2DImpl), "ezTexture2D::Impl has incorrect alignment");
+
+ezTexture2D::ezTexture2D()
+{
+    // instanciate implementation struct with placement new
+    new (m_Data) ezTexture2DImpl();
+}
+
+ezTexture2D::~ezTexture2D()
+{
+    // destory implementation struct
+    m_Data->~ezTexture2DImpl();
+}
 
 void ezTexture2D::Bind()
 {
