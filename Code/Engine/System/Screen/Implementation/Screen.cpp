@@ -1,4 +1,3 @@
-
 #include <SystemPCH.h>
 
 #include <System/Screen/Screen.h>

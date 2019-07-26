@@ -1,4 +1,5 @@
-#include <SystemPCH.h>
+#include <System/SystemInternal.h>
+EZ_SYSTEM_INTERNAL_HEADER
 
 #include <System/Window/Implementation/Win32/InputDevice_win32.h>
 

@@ -1,4 +1,6 @@
-#include <SystemPCH.h>
+#include <System/SystemInternal.h>
+EZ_SYSTEM_INTERNAL_HEADER
+
 #include <Foundation/Basics/Platform/Win/IncludeWindows.h>
 
 BOOL CALLBACK ezMonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData)

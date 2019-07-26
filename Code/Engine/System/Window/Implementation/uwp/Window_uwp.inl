@@ -1,4 +1,5 @@
-#include <SystemPCH.h>
+#include <System/SystemInternal.h>
+EZ_SYSTEM_INTERNAL_HEADER
 
 #include <Foundation/Basics.h>
 #include <Foundation/Basics/Platform/uwp/UWPUtils.h>

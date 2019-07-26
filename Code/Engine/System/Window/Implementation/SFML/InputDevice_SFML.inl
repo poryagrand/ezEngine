@@ -1,4 +1,5 @@
-#include <SystemPCH.h>
+#include <System/SystemInternal.h>
+EZ_SYSTEM_INTERNAL_HEADER
 
 #include <SFML/Window/Window.hpp>
 #include <System/Window/Implementation/SFML/InputDevice_SFML.h>

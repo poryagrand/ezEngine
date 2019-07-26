@@ -1,5 +1,8 @@
 #pragma once
 
+#include <System/SystemInternal.h>
+EZ_SYSTEM_INTERNAL_HEADER
+
 #include <Core/Input/DeviceTypes/MouseKeyboard.h>
 #include <SFML/Window/Window.hpp>
 #include <System/SystemDLL.h>
