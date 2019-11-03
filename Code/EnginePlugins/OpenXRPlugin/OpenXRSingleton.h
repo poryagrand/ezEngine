@@ -41,8 +41,17 @@ public:
   virtual ezGALTextureHandle GetCompanionViewRenderTarget() const override;
 
 private:
-  ezResult InitGraphicsPlugin();
+  XrResult InitSystem();
+  void DeinitSystem();
+  XrResult InitSession();
+  void DeinitSession();
+  XrResult InitGraphicsPlugin();
   void DeinitGraphicsPlugin();
+  XrResult SelectColorSwapchainFormat(int64_t& format);
+  XrSwapchainImageBaseHeader* CreateSwapchainImages(uint32_t viewIndex, uint32_t imageCount);
+  XrResult InitSwapChain();
+  void DeinitSwapChain();
+
 
   void GameApplicationEventHandler(const ezGameApplicationExecutionEvent& e);
   void GALDeviceEventHandler(const ezGALDeviceEvent& e);
@@ -71,17 +80,58 @@ private:
   //static ezVec3 ConvertSteamVRVector(const vr::HmdVector3_t& vector);
 
 private:
-  bool m_bInitialized = false;
+  struct FrameState
+  {
+  };
 
-  XrInstance m_instance;
-  XrSession m_session;
+  // Instance
+  XrInstance m_instance = nullptr;
+
+  // System
   uint64_t m_systemId = XR_NULL_SYSTEM_ID;
+
+  // Session
+  XrSession m_session = nullptr;
+  XrSpace m_sceneSpace = nullptr;
+  ezEventSubscriptionID m_executionEventsId = 0;
+  ezEventSubscriptionID m_beginRenderEventsId = 0;
+  ezEventSubscriptionID m_GALdeviceEventsId = 0;
+
+  // Graphics plugin
   XrEnvironmentBlendMode m_blendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
   XrGraphicsBindingD3D11KHR m_xrGraphicsBindingD3D11{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
-  XrSpace m_sceneSpace;
+  XrFormFactor m_formFactor{XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
+  XrViewConfigurationType m_primaryViewConfigurationType{XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+  ezHybridArray<XrSwapchainImageD3D11KHR, 3> m_swapChainImagesD3D11[2];
 
-  //vr::IVRSystem* m_pHMD = nullptr;
-  //vr::IVRRenderModels* m_pRenderModels = nullptr;
+  // Swapchain
+  int64_t m_colorSwapchainFormat = -1;
+  XrViewConfigurationView m_primaryConfigView[2];
+  XrSwapchain m_swapchain[2] = {nullptr, nullptr};
+  ezUInt32 m_swapchainWidth = 0;
+  ezUInt32 m_swapchainHeight = 0;
+  uint32_t m_imageCount = 0;
+  XrSwapchainImageBaseHeader* m_swapChainImages[2] = {nullptr, nullptr};
+  uint32_t m_swapchainImageIndex[2] = {0, 0};
+  // Views
+  XrView m_views[2];
+  XrCompositionLayerProjection m_layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+  XrCompositionLayerProjectionView m_projectionLayerViews[2];
+
+  // State
+  bool m_sessionRunning = false;
+  bool m_exitRenderLoop = false;
+  bool m_requestRestart = false;
+  XrSessionState m_sessionState{XR_SESSION_STATE_UNKNOWN};
+
+  //FrameState m_frameState[2];
+  ezInt32 m_updateFrame = 0;
+  ezInt32 m_renderFrame = 1;
+  XrFrameWaitInfo m_frameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
+  XrFrameState m_frameState{XR_TYPE_FRAME_STATE};
+  XrFrameBeginInfo m_frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
+  XrSessionState m_sessionState{XR_SESSION_STATE_UNKNOWN};
+
 
   ezHMDInfo m_Info;
   //ezVRDeviceState m_DeviceState[vr::k_unMaxTrackedDeviceCount];
