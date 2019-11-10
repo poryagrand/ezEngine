@@ -350,3 +350,6 @@ MigrationBackup/
 AssetCache
 /build/
 Data/Samples/Testing Chambers/TypeScript/
+/buildUWP/
+/workspaceAndroid/
+

@@ -20,9 +20,13 @@
 #include <Core/World/World.h>
 #include <GameEngine/VirtualReality/StageSpaceComponent.h>
 #include <RendererCore/Shader/ShaderResource.h>
-#include <RendererDX11/Device/DeviceDX11.h>
 #include <algorithm>
 #include <vector>
+
+#if EZ_ENABLED(EZ_PLATFORM_WINDOWS)
+#  include <RendererDX11/Context/ContextDX11.h>
+#  include <RendererDX11/Device/DeviceDX11.h>
+#endif
 
 EZ_IMPLEMENT_SINGLETON(ezOpenXR);
 
@@ -164,6 +168,8 @@ const ezHMDInfo& ezOpenXR::GetHmdInfo() const
 void ezOpenXR::GetDeviceList(ezHybridArray<ezVRDeviceID, 64>& out_Devices) const
 {
   EZ_ASSERT_DEV(IsInitialized(), "Need to call 'Initialize' first.");
+  out_Devices.PushBack(0);
+  //TODO
   /*for (ezVRDeviceID i = 0; i < vr::k_unMaxTrackedDeviceCount; i++)
   {
     if (m_DeviceState[i].m_bDeviceIsConnected)
@@ -188,25 +194,23 @@ ezVRDeviceID ezOpenXR::GetDeviceIDByType(ezVRDeviceType::Enum type) const
       deviceID = m_iRightControllerDeviceID;
       break;
     default:
-      deviceID = type - ezVRDeviceType::DeviceID0;
+      deviceID = -1;
       break;
   }
 
-  /*if (deviceID != -1 && !m_DeviceState[deviceID].m_bDeviceIsConnected)
+  if (deviceID != -1 && !m_DeviceState[deviceID].m_bDeviceIsConnected)
   {
     deviceID = -1;
-  }*/
+  }
   return deviceID;
 }
 
 const ezVRDeviceState& ezOpenXR::GetDeviceState(ezVRDeviceID uiDeviceID) const
 {
-  /*EZ_ASSERT_DEV(m_bInitialized, "Need to call 'Initialize' first.");
-  EZ_ASSERT_DEV(uiDeviceID < vr::k_unMaxTrackedDeviceCount, "Invalid device ID.");
+  EZ_ASSERT_DEV(IsInitialized(), "Need to call 'Initialize' first.");
+  EZ_ASSERT_DEV(uiDeviceID < 3, "Invalid device ID.");
   EZ_ASSERT_DEV(m_DeviceState[uiDeviceID].m_bDeviceIsConnected, "Invalid device ID.");
-  return m_DeviceState[uiDeviceID];*/
-  static ezVRDeviceState bla;
-  return bla;
+  return m_DeviceState[uiDeviceID];
 }
 
 ezEvent<const ezVRDeviceEvent&>& ezOpenXR::DeviceEvents()
@@ -217,6 +221,22 @@ ezEvent<const ezVRDeviceEvent&>& ezOpenXR::DeviceEvents()
 ezViewHandle ezOpenXR::CreateVRView(
   const ezRenderPipelineResourceHandle& hRenderPipeline, ezCamera* pCamera, ezGALMSAASampleCount::Enum msaaCount)
 {
+  EZ_ASSERT_DEV(IsInitialized(), "Need to call 'Initialize' first.");
+
+  XrResult res = InitSystem();
+  if (res != XrResult::XR_SUCCESS)
+  {
+    ezLog::Error("Bla");
+    return ezViewHandle();
+  }
+  res = InitSession();
+  if (res != XrResult::XR_SUCCESS)
+  {
+    DeinitSystem();
+    ezLog::Error("Bla");
+    return ezViewHandle();
+  }
+
   SetHMDCamera(pCamera);
 
   ezGALDevice* pDevice = ezGALDevice::GetDefaultDevice();
@@ -283,6 +303,9 @@ bool ezOpenXR::DestroyVRView()
   m_hColorRT.Invalidate();
   pDevice->DestroyTexture(m_hDepthRT);
   m_hDepthRT.Invalidate();
+
+  DeinitSession();
+  DeinitSystem();
   return true;
 }
 
@@ -411,7 +434,7 @@ void ezOpenXR::DeinitGraphicsPlugin()
   m_xrGraphicsBindingD3D11.device = nullptr;
 }
 
-XrResult ezOpenXR::SelectColorSwapchainFormat(int64_t& format)
+XrResult ezOpenXR::SelectSwapchainFormat(int64_t& colorFormat, int64_t& depthFormat)
 {
   uint32_t swapchainFormatCount;
   XR_SUCCEED_OR_RETURN_LOG(xrEnumerateSwapchainFormats(m_session, 0, &swapchainFormatCount, nullptr), voidFunction);
@@ -426,6 +449,13 @@ XrResult ezOpenXR::SelectColorSwapchainFormat(int64_t& format)
     DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
   };
 
+  constexpr DXGI_FORMAT SupportedDepthSwapchainFormats[] = {
+    DXGI_FORMAT_D32_FLOAT,
+    DXGI_FORMAT_D16_UNORM,
+    DXGI_FORMAT_D24_UNORM_S8_UINT,
+    DXGI_FORMAT_D32_FLOAT_S8X24_UINT,
+  };
+
   auto swapchainFormatIt = std::find_first_of(std::begin(SupportedColorSwapchainFormats),
     std::end(SupportedColorSwapchainFormats),
     swapchainFormats.begin(),
@@ -434,15 +464,35 @@ XrResult ezOpenXR::SelectColorSwapchainFormat(int64_t& format)
   {
     return XrResult::XR_ERROR_INITIALIZATION_FAILED;
   }
-  format = *swapchainFormatIt;
+  colorFormat = *swapchainFormatIt;
+
+  if (m_supportsDepth)
+  {
+    auto depthSwapchainFormatIt = std::find_first_of(std::begin(SupportedDepthSwapchainFormats),
+      std::end(SupportedDepthSwapchainFormats),
+      swapchainFormats.begin(),
+      swapchainFormats.end());
+    if (depthSwapchainFormatIt == std::end(SupportedDepthSwapchainFormats))
+    {
+      return XrResult::XR_ERROR_INITIALIZATION_FAILED;
+    }
+    depthFormat = *depthSwapchainFormatIt;
+  }
   return XrResult::XR_SUCCESS;
 }
 
-XrSwapchainImageBaseHeader* ezOpenXR::CreateSwapchainImages(uint32_t viewIndex, uint32_t imageCount)
+XrSwapchainImageBaseHeader* ezOpenXR::CreateSwapchainImages(Swapchain& swapchain, SwapchainType type)
 {
-  m_swapChainImagesD3D11[viewIndex].SetCount(imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
-
-  return reinterpret_cast<XrSwapchainImageBaseHeader*>(m_swapChainImagesD3D11[viewIndex].GetData());
+  if (type == SwapchainType::Color)
+  {
+    m_colorSwapChainImagesD3D11.SetCount(swapchain.imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
+    return reinterpret_cast<XrSwapchainImageBaseHeader*>(m_colorSwapChainImagesD3D11.GetData());
+  }
+  else
+  {
+    m_depthSwapChainImagesD3D11.SetCount(swapchain.imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
+    return reinterpret_cast<XrSwapchainImageBaseHeader*>(m_depthSwapChainImagesD3D11.GetData());
+  }
 }
 
 XrResult ezOpenXR::InitSwapChain()
@@ -459,55 +509,106 @@ XrResult ezOpenXR::InitSwapChain()
     DeinitSwapChain();
     return XR_ERROR_INITIALIZATION_FAILED;
   }
-  XR_SUCCEED_OR_RETURN_LOG(xrEnumerateViewConfigurationViews(m_instance, m_systemId, m_primaryViewConfigurationType, viewCount, &viewCount, m_primaryConfigView), DeinitSwapChain);
+  ezHybridArray<XrViewConfigurationView, 2> views;
+  views.SetCount(viewCount, {XR_TYPE_VIEW_CONFIGURATION_VIEW});
+  XR_SUCCEED_OR_RETURN_LOG(xrEnumerateViewConfigurationViews(m_instance, m_systemId, m_primaryViewConfigurationType, viewCount, &viewCount, views.GetData()), DeinitSwapChain);
 
   // Create the swapchain and get the images.
   // Select a swapchain format.
-  m_colorSwapchainFormat = 0;
-  XR_SUCCEED_OR_RETURN_LOG(SelectColorSwapchainFormat(m_colorSwapchainFormat), DeinitSwapChain);
+  m_primaryConfigView = views[0];
+  XR_SUCCEED_OR_RETURN_LOG(SelectSwapchainFormat(m_colorSwapchain.format, m_depthSwapchain.format), DeinitSwapChain);
 
-  for (uint32_t i = 0; i < viewCount; i++)
+  // Create the swapchain.
+  XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+  swapchainCreateInfo.arraySize = 2;
+  swapchainCreateInfo.format = m_colorSwapchain.format;
+  swapchainCreateInfo.width = m_primaryConfigView.recommendedImageRectWidth;
+  swapchainCreateInfo.height = m_primaryConfigView.recommendedImageRectHeight;
+  swapchainCreateInfo.mipCount = 1;
+  swapchainCreateInfo.faceCount = 1;
+  swapchainCreateInfo.sampleCount = 0;
+  swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+
+  m_Info.m_vEyeRenderTargetSize.Set(swapchainCreateInfo.width, swapchainCreateInfo.height);
+
+  auto CreateSwapChain = [this](const XrSwapchainCreateInfo& swapchainCreateInfo, Swapchain& swapchain, SwapchainType type) -> XrResult {
+    XR_SUCCEED_OR_RETURN_LOG(xrCreateSwapchain(m_session, &swapchainCreateInfo, &swapchain.handle), voidFunction);
+    XR_SUCCEED_OR_RETURN_LOG(xrEnumerateSwapchainImages(swapchain.handle, 0, &swapchain.imageCount, nullptr), voidFunction);
+    swapchain.images = CreateSwapchainImages(swapchain, type);
+    XR_SUCCEED_OR_RETURN_LOG(xrEnumerateSwapchainImages(swapchain.handle, swapchain.imageCount, &swapchain.imageCount, swapchain.images), voidFunction);
+    return XrResult::XR_SUCCESS;
+  };
+  XR_SUCCEED_OR_RETURN(CreateSwapChain(swapchainCreateInfo, m_colorSwapchain, SwapchainType::Color), DeinitSwapChain);
+
+  if (m_supportsDepth)
   {
-    // Create the swapchain.
-    XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-    swapchainCreateInfo.arraySize = 1;
-    swapchainCreateInfo.format = m_colorSwapchainFormat;
-    swapchainCreateInfo.width = m_primaryConfigView[i].recommendedImageRectWidth;
-    swapchainCreateInfo.height = m_primaryConfigView[i].recommendedImageRectHeight;
-    swapchainCreateInfo.mipCount = 1;
-    swapchainCreateInfo.faceCount = 1;
-    swapchainCreateInfo.sampleCount = m_primaryConfigView[i].recommendedSwapchainSampleCount;
-    swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-
-    m_Info.m_vEyeRenderTargetSize.Set(swapchainCreateInfo.width, swapchainCreateInfo.height);
-    m_swapchainWidth = swapchainCreateInfo.width;
-    m_swapchainHeight = swapchainCreateInfo.height;
-    XR_SUCCEED_OR_RETURN_LOG(xrCreateSwapchain(m_session, &swapchainCreateInfo, &m_swapchain[i]), DeinitSwapChain);
-
-    XR_SUCCEED_OR_RETURN_LOG(xrEnumerateSwapchainImages(m_swapchain[i], 0, &m_imageCount, nullptr), DeinitSwapChain);
-    m_swapChainImages[i] = CreateSwapchainImages(i, m_imageCount);
-    XR_SUCCEED_OR_RETURN_LOG(xrEnumerateSwapchainImages(m_swapchain[i], m_imageCount, &m_imageCount, m_swapChainImages[i]), DeinitSwapChain);
+    swapchainCreateInfo.format = m_depthSwapchain.format;
+    swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    XR_SUCCEED_OR_RETURN(CreateSwapChain(swapchainCreateInfo, m_depthSwapchain, SwapchainType::Depth), DeinitSwapChain);
   }
   return XrResult::XR_SUCCESS;
 }
 
 void ezOpenXR::DeinitSwapChain()
 {
-  m_colorSwapchainFormat = -1;
-  for (uint32_t i = 0; i < 2; i++)
-  {
-    m_primaryConfigView[i] = {XR_TYPE_VIEW_CONFIGURATION_VIEW};
-    if (m_swapchain[i] != nullptr)
+  auto DeleteSwapchain = [](Swapchain& swapchain) {
+    if (swapchain.handle != nullptr)
     {
-      xrDestroySwapchain(m_swapchain[i]);
-      m_swapchain[i] = nullptr;
+      xrDestroySwapchain(swapchain.handle);
+      swapchain.handle = nullptr;
     }
-    m_swapChainImagesD3D11[i].Clear();
-    m_swapChainImages[i] = nullptr;
+    swapchain.format = 0;
+    swapchain.imageCount = 0;
+    swapchain.images = nullptr;
+    swapchain.imageIndex = 0;
+  };
+  m_primaryConfigView = {XR_TYPE_VIEW_CONFIGURATION_VIEW};
+  DeleteSwapchain(m_colorSwapchain);
+  DeleteSwapchain(m_depthSwapchain);
+
+  m_colorSwapChainImagesD3D11.Clear();
+  m_depthSwapChainImagesD3D11.Clear();
+}
+
+void ezOpenXR::GALDeviceEventHandler(const ezGALDeviceEvent& e)
+{
+  if (e.m_Type == ezGALDeviceEvent::Type::BeforeBeginFrame)
+  {
+    m_frameWaitInfo = XrFrameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
+    m_frameState = XrFrameState{XR_TYPE_FRAME_STATE};
+    XrResult result = xrWaitFrame(m_session, &m_frameWaitInfo, &m_frameState);
+    if (result != XR_SUCCESS)
+    {
+      //TODO?
+    }
+    m_frameBeginInfo = XrFrameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
+    result = xrBeginFrame(m_session, &m_frameBeginInfo);
+    if (result != XR_SUCCESS)
+    {
+      //TODO?
+    }
+    UpdatePoses();
+
+    auto AquireAndWait = [](Swapchain& swapchain) {
+      XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+      XR_CHECK_LOG(xrAcquireSwapchainImage(swapchain.handle, &acquireInfo, &swapchain.imageIndex));
+
+      XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+      waitInfo.timeout = XR_INFINITE_DURATION;
+      XR_CHECK_LOG(xrWaitSwapchainImage(swapchain.handle, &waitInfo));
+    };
+    AquireAndWait(m_colorSwapchain);
+    if (m_supportsDepth)
+      AquireAndWait(m_depthSwapchain);
+
+    // This will update the extracted view from last frame with the new data we got
+    // this frame just before starting to render.
+    ezView* pView = nullptr;
+    if (ezRenderWorld::TryGetView(m_hView, pView))
+    {
+      pView->UpdateViewData(ezRenderWorld::GetDataIndexForRendering());
+    }
   }
-  m_swapchainWidth = 0;
-  m_swapchainHeight = 0;
-  m_imageCount = 0;
 }
 
 void ezOpenXR::GameApplicationEventHandler(const ezGameApplicationExecutionEvent& e)
@@ -590,7 +691,7 @@ void ezOpenXR::GameApplicationEventHandler(const ezGameApplicationExecutionEvent
         {
           return;
         }
-        XrResult res = InitSession();
+        res = InitSession();
         if (res != XR_SUCCESS)
         {
           DeinitSystem();
@@ -605,65 +706,65 @@ void ezOpenXR::GameApplicationEventHandler(const ezGameApplicationExecutionEvent
     if (m_hView.IsInvalidated() || !m_sessionRunning)
       return;
 
-    ezGALDevice* pDevice = ezGALDevice::GetDefaultDevice();
-    ezGALContext* pGALContext = pDevice->GetPrimaryContext();
-
-    ezGALTextureHandle hLeft;
-    ezGALTextureHandle hRight;
-
+#if EZ_ENABLED(EZ_PLATFORM_WINDOWS)
+    ezGALDeviceDX11* pDevice = static_cast<ezGALDeviceDX11*>(ezGALDevice::GetDefaultDevice());
+    ezGALContextDX11* pGALContext = static_cast<ezGALContextDX11*>(pDevice->GetPrimaryContext());
     if (m_eyeDesc.m_SampleCount == ezGALMSAASampleCount::None)
     {
-      hLeft = m_hColorRT;
-      hRight = ezGPUResourcePool::GetDefaultInstance()->GetRenderTarget(m_eyeDesc);
-      ezGALTextureSubresource sourceSubRes;
-      sourceSubRes.m_uiArraySlice = 1;
-      sourceSubRes.m_uiMipLevel = 0;
-
-      ezGALTextureSubresource destSubRes;
-      destSubRes.m_uiArraySlice = 0;
-      destSubRes.m_uiMipLevel = 0;
-
-      pGALContext->CopyTextureRegion(hRight, destSubRes, ezVec3U32(0, 0, 0), m_hColorRT, sourceSubRes,
-        ezBoundingBoxu32(ezVec3U32(0, 0, 0), ezVec3U32(m_Info.m_vEyeRenderTargetSize.x, m_Info.m_vEyeRenderTargetSize.y, 1)));
+      const ezGALTextureDX11* pSource = static_cast<const ezGALTextureDX11*>(pDevice->GetTexture(m_hColorRT));
+      ID3D11Resource* dxSource = pSource->GetDXTexture();
+      pGALContext->GetDXContext()->CopyResource(dxSource, m_colorSwapChainImagesD3D11[m_colorSwapchain.imageIndex].texture);
     }
     else
     {
-      // Submitting the multi-sampled m_hColorRT will cause dx errors on submit :-/
-      // So have to resolve both eyes.
-      ezGALTextureCreationDescription tempDesc = m_eyeDesc;
-      tempDesc.m_SampleCount = ezGALMSAASampleCount::None;
-      hLeft = ezGPUResourcePool::GetDefaultInstance()->GetRenderTarget(tempDesc);
-      hRight = ezGPUResourcePool::GetDefaultInstance()->GetRenderTarget(tempDesc);
-
-      ezGALTextureSubresource sourceSubRes;
-      sourceSubRes.m_uiArraySlice = 0;
-      sourceSubRes.m_uiMipLevel = 0;
-
-      ezGALTextureSubresource destSubRes;
-      destSubRes.m_uiArraySlice = 0;
-      destSubRes.m_uiMipLevel = 0;
-      pGALContext->ResolveTexture(hLeft, destSubRes, m_hColorRT, sourceSubRes);
-      sourceSubRes.m_uiArraySlice = 1;
-      pGALContext->ResolveTexture(hRight, destSubRes, m_hColorRT, sourceSubRes);
+      const ezGALTextureDX11* pSource = static_cast<const ezGALTextureDX11*>(pDevice->GetTexture(m_hColorRT));
+      ID3D11Resource* dxSource = pSource->GetDXTexture();
+      ezUInt32 srcSubResource = D3D11CalcSubresource(0, 0, 1);
+      ezUInt32 dstSubResource = D3D11CalcSubresource(0, 0, 1);
+      pGALContext->GetDXContext()->ResolveSubresource(m_colorSwapChainImagesD3D11[m_colorSwapchain.imageIndex].texture,
+        dstSubResource, dxSource, srcSubResource, static_cast<DXGI_FORMAT>(m_colorSwapchain.format));
+      srcSubResource = D3D11CalcSubresource(0, 1, 1);
+      dstSubResource = D3D11CalcSubresource(0, 1, 1);
+      pGALContext->GetDXContext()->ResolveSubresource(m_colorSwapChainImagesD3D11[m_colorSwapchain.imageIndex].texture,
+        dstSubResource, dxSource, srcSubResource, static_cast<DXGI_FORMAT>(m_colorSwapchain.format));
     }
-
-#if EZ_ENABLED(EZ_PLATFORM_WINDOWS)
+#else
+    EZ_ASSERT_NOT_IMPLEMENTED;
+#endif
 
     for (uint32_t i = 0; i < 2; i++)
     {
       m_projectionLayerViews[i] = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
       m_projectionLayerViews[i].pose = m_views[i].pose;
       m_projectionLayerViews[i].fov = m_views[i].fov;
-      m_projectionLayerViews[i].subImage.swapchain = m_swapchain[i];
+      m_projectionLayerViews[i].subImage.swapchain = m_colorSwapchain.handle;
       m_projectionLayerViews[i].subImage.imageRect.offset = {0, 0};
-      m_projectionLayerViews[i].subImage.imageRect.extent = {m_swapchainWidth, m_swapchainHeight};
+      m_projectionLayerViews[i].subImage.imageRect.extent = {(ezInt32)m_Info.m_vEyeRenderTargetSize.x, (ezInt32)m_Info.m_vEyeRenderTargetSize.y};
+      m_projectionLayerViews[i].subImage.imageArrayIndex = i;
 
-      XrSwapchainImageBaseHeader* swapchainImage = reinterpret_cast<XrSwapchainImageBaseHeader*>(&m_swapChainImagesD3D11[i][m_swapchainImageIndex[i]]);
+      if (m_supportsDepth)
+      {
+        m_depthLayerViews[i] = {XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR};
+        m_depthLayerViews[i].minDepth = 0;
+        m_depthLayerViews[i].maxDepth = 1;
+        m_depthLayerViews[i].nearZ = 0; //TODO
+        m_depthLayerViews[i].farZ = 1;  //TODO
+        m_depthLayerViews[i].subImage.swapchain = m_depthSwapchain.handle;
+        m_depthLayerViews[i].subImage.imageRect.offset = {0, 0};
+        m_depthLayerViews[i].subImage.imageRect.extent = {(ezInt32)m_Info.m_vEyeRenderTargetSize.x, (ezInt32)m_Info.m_vEyeRenderTargetSize.y};
+        m_depthLayerViews[i].subImage.imageArrayIndex = i;
 
-      XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-      XR_CHECK_LOG(xrReleaseSwapchainImage(m_swapchain[i], &releaseInfo));
+        m_projectionLayerViews[i].next = &m_depthLayerViews[i];
+      }
+    }
+    XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    XR_CHECK_LOG(xrReleaseSwapchainImage(m_colorSwapchain.handle, &releaseInfo));
+    if (m_supportsDepth)
+    {
+      XR_CHECK_LOG(xrReleaseSwapchainImage(m_depthSwapchain.handle, &releaseInfo));
     }
 
+    //XrSwapchainImageBaseHeader* swapchainImage = reinterpret_cast<XrSwapchainImageBaseHeader*>(&m_colorSwapChainImagesD3D11[m_swapchainImageIndex]);
     m_layer.space = m_sceneSpace;
     m_layer.viewCount = 2;
     m_layer.views = m_projectionLayerViews;
@@ -682,18 +783,6 @@ void ezOpenXR::GameApplicationEventHandler(const ezGameApplicationExecutionEvent
     if (result != XR_SUCCESS)
     {
       //TODO?
-    }
-
-#endif
-
-    if (m_eyeDesc.m_SampleCount == ezGALMSAASampleCount::None)
-    {
-      ezGPUResourcePool::GetDefaultInstance()->ReturnRenderTarget(hRight);
-    }
-    else
-    {
-      ezGPUResourcePool::GetDefaultInstance()->ReturnRenderTarget(hLeft);
-      ezGPUResourcePool::GetDefaultInstance()->ReturnRenderTarget(hRight);
     }
   }
   else if (e.m_Type == ezGameApplicationExecutionEvent::Type::BeginAppTick)
@@ -732,48 +821,6 @@ void ezOpenXR::GameApplicationEventHandler(const ezGameApplicationExecutionEvent
       ezGALResourceViewHandle hInputView = pDevice->GetDefaultResourceView(m_hColorRT);
       m_pRenderContext->BindTexture2D("VRTexture", hInputView);
       m_pRenderContext->DrawMeshBuffer();
-    }
-  }
-}
-
-void ezOpenXR::GALDeviceEventHandler(const ezGALDeviceEvent& e)
-{
-  if (e.m_Type == ezGALDeviceEvent::Type::BeforeBeginFrame)
-  {
-    m_frameWaitInfo = XrFrameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
-    m_frameState = XrFrameState{XR_TYPE_FRAME_STATE};
-    XrResult result = xrWaitFrame(m_session, &m_frameWaitInfo, &m_frameState);
-    if (result != XR_SUCCESS)
-    {
-      //TODO?
-    }
-    m_frameBeginInfo = XrFrameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
-    result = xrBeginFrame(m_session, &m_frameBeginInfo);
-    if (result != XR_SUCCESS)
-    {
-      //TODO?
-    }
-    UpdatePoses();
-
-    for (uint32_t i = 0; i < 2; i++)
-    {
-      // Each view has a separate swapchain which is acquired, rendered to, and released.
-      XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-      XR_CHECK_LOG(xrAcquireSwapchainImage(m_swapchain[i], &acquireInfo, &m_swapchainImageIndex[i]));
-
-      XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-      waitInfo.timeout = XR_INFINITE_DURATION;
-      XR_CHECK_LOG(xrWaitSwapchainImage(m_swapchain[i], &waitInfo));
-    }
-
-
-
-    // This will update the extracted view from last frame with the new data we got
-    // this frame just before starting to render.
-    ezView* pView = nullptr;
-    if (ezRenderWorld::TryGetView(m_hView, pView))
-    {
-      pView->UpdateViewData(ezRenderWorld::GetDataIndexForRendering());
     }
   }
 }
@@ -858,33 +905,34 @@ void ezOpenXR::UpdatePoses()
   XrViewLocateInfo viewLocateInfo{XR_TYPE_VIEW_LOCATE_INFO};
   viewLocateInfo.displayTime = m_frameState.predictedDisplayTime;
   viewLocateInfo.space = m_sceneSpace;
-  XR_CHECK_LOG(xrLocateViews(m_session, &viewLocateInfo, &viewState, viewCapacityInput, &viewCountOutput, m_views));
-  /*CHECK(viewCountOutput == viewCapacityInput);
-  CHECK(viewCountOutput == m_configViews.size());
-  CHECK(viewCountOutput == m_swapchains.size());*/
-
-  /*vr::TrackedDevicePose_t TrackedDevicePose[vr::k_unMaxTrackedDeviceCount];
-  vr::EVRCompositorError err = vr::VRCompositor()->WaitGetPoses(TrackedDevicePose, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
-  for (ezVRDeviceID uiDeviceID = 0; uiDeviceID < vr::k_unMaxTrackedDeviceCount; ++uiDeviceID)
+  XrResult res = xrLocateViews(m_session, &viewLocateInfo, &viewState, viewCapacityInput, &viewCountOutput, m_views);
+  if (res != XR_SUCCESS)
   {
-    m_DeviceState[uiDeviceID].m_bPoseIsValid = TrackedDevicePose[uiDeviceID].bPoseIsValid;
-    if (TrackedDevicePose[uiDeviceID].bPoseIsValid)
-    {
-      m_DeviceState[uiDeviceID].m_vVelocity = ConvertSteamVRVector(TrackedDevicePose[uiDeviceID].vVelocity);
-      m_DeviceState[uiDeviceID].m_vAngularVelocity = ConvertSteamVRVector(TrackedDevicePose[uiDeviceID].vAngularVelocity);
-      m_DeviceState[uiDeviceID].m_mPose = ConvertSteamVRMatrix(TrackedDevicePose[uiDeviceID].mDeviceToAbsoluteTracking);
-      m_DeviceState[uiDeviceID].m_vPosition = m_DeviceState[uiDeviceID].m_mPose.GetTranslationVector();
-      m_DeviceState[uiDeviceID].m_qRotation.SetFromMat3(m_DeviceState[uiDeviceID].m_mPose.GetRotationalPart());
-    }
-  }*/
+    m_DeviceState[0].m_bPoseIsValid = false;
+    return;
+  }
 
-  if (m_pCameraToSynchronize)
+  // Update camera projection
   {
-    UpdateCamera();
+    const float fAspectRatio = (float)m_Info.m_vEyeRenderTargetSize.x / (float)m_Info.m_vEyeRenderTargetSize.y;
+    auto CreateProjection = [](const XrView& view, ezCamera* cam) {
+      return ezGraphicsUtils::CreatePerspectiveProjectionMatrix(ezMath::Tan(ezAngle::Radian(view.fov.angleLeft)),
+        ezMath::Tan(ezAngle::Radian(view.fov.angleRight)),
+        ezMath::Tan(ezAngle::Radian(view.fov.angleDown)),
+        ezMath::Tan(ezAngle::Radian(view.fov.angleUp)),
+        cam->GetNearPlane(),
+        cam->GetFarPlane());
+    };
 
-    ezMat4 viewMatrix;
-    viewMatrix.SetLookAtMatrix(ezVec3::ZeroVector(), ezVec3(0, -1, 0), ezVec3(0, 0, 1));
+    // Update projection with newest near/ far values. If not sync camera is set, just use the last value from VR camera.
+    const ezMat4 projLeft = CreateProjection(m_views[0], m_pCameraToSynchronize ? m_pCameraToSynchronize : &m_VRCamera);
+    const ezMat4 projRight = CreateProjection(m_views[1], m_pCameraToSynchronize ? m_pCameraToSynchronize : &m_VRCamera);
+    m_VRCamera.SetStereoProjection(projLeft, projRight, fAspectRatio);
+  }
 
+  // Update camera view
+  ezMat4 cameraCenterView;
+  {
     ezTransform add;
     add.SetIdentity();
     ezView* pView = nullptr;
@@ -906,15 +954,38 @@ void ezOpenXR::UpdatePoses()
       }
     }
 
+    // First compute XR space center view matrix (for device state pose)
+    const ezMat4 viewLeft = ConvertPoseToMatrix(m_views[0].pose);
+    const ezMat4 viewRight = ConvertPoseToMatrix(m_views[1].pose);
+    m_VRCamera.SetViewMatrix(viewLeft, ezCameraEye::Left);
+    m_VRCamera.SetViewMatrix(viewRight, ezCameraEye::Right);
+    cameraCenterView = ezGraphicsUtils::CreateViewMatrix(m_VRCamera.GetCenterPosition(),
+      m_VRCamera.GetCenterDirForwards(), m_VRCamera.GetCenterDirRight(), m_VRCamera.GetCenterDirUp());
+
+    // Then set shifted view matrix
     const ezMat4 mAdd = add.GetAsMat4();
-    ezMat4 mShiftedPos = ezMat4::IdentityMatrix(); //TODO m_DeviceState[0].m_mPose * mAdd;
+    ezMat4 mShiftedPos = /*m_DeviceState[0].m_mPose * */ mAdd;
     mShiftedPos.Invert();
 
-    const ezMat4 mViewTransformLeft = viewMatrix * m_Info.m_mat4eyePosLeft * mShiftedPos;
-    const ezMat4 mViewTransformRight = viewMatrix * m_Info.m_mat4eyePosRight * mShiftedPos;
-
+    const ezMat4 mViewTransformLeft = viewLeft * mShiftedPos;
+    const ezMat4 mViewTransformRight = viewRight * mShiftedPos;
     m_VRCamera.SetViewMatrix(mViewTransformLeft, ezCameraEye::Left);
     m_VRCamera.SetViewMatrix(mViewTransformRight, ezCameraEye::Right);
+  }
+
+  // Update state
+  m_DeviceState[0].m_mPose = cameraCenterView;
+  m_DeviceState[0].m_vPosition = m_DeviceState[0].m_mPose.GetTranslationVector();
+  m_DeviceState[0].m_qRotation.SetFromMat3(m_DeviceState[0].m_mPose.GetRotationalPart());
+  m_DeviceState[0].m_vVelocity.SetZero();
+  m_DeviceState[0].m_vAngularVelocity.SetZero();
+  //m_hmdState.m_Type = ezVRDeviceState::Type::HMD;
+  m_DeviceState[0].m_bPoseIsValid = true;
+  m_DeviceState[0].m_bDeviceIsConnected = true;
+
+  if (m_pCameraToSynchronize)
+  {
+    UpdateCamera();
 
     // put the camera orientation into the sound listener and enable the listener override mode
     if (ezSoundInterface* pSoundInterface = ezSingletonRegistry::GetSingletonInstance<ezSoundInterface>())
@@ -927,6 +998,8 @@ void ezOpenXR::UpdatePoses()
 
 void ezOpenXR::UpdateHands()
 {
+
+
   //m_iLeftControllerDeviceID = m_pHMD->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
   //m_iRightControllerDeviceID = m_pHMD->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
 }
@@ -972,7 +1045,7 @@ void ezOpenXR::UpdateCamera()
 {
   if (m_uiSettingsModificationCounter != m_pCameraToSynchronize->GetSettingsModificationCounter())
   {
-    const float fAspectRatio = (float)m_Info.m_vEyeRenderTargetSize.x / (float)m_Info.m_vEyeRenderTargetSize.y;
+    //const float fAspectRatio = (float)m_Info.m_vEyeRenderTargetSize.x / (float)m_Info.m_vEyeRenderTargetSize.y;
     /* ezMat4 projLeft =
         GetHMDProjectionEye(vr::Hmd_Eye::Eye_Left, m_pCameraToSynchronize->GetNearPlane(), m_pCameraToSynchronize->GetFarPlane());
     ezMat4 projRight =
@@ -997,6 +1070,25 @@ XrQuaternionf ezOpenXR::ConvertOrientation(const ezQuat& q)
 XrVector3f ezOpenXR::ConvertPosition(const ezVec3& pos)
 {
   return {pos.x, pos.z, pos.y};
+}
+
+ezQuat ezOpenXR::ConvertOrientation(const XrQuaternionf& q)
+{
+  return {q.x, q.z, q.y, -q.w};
+}
+
+ezVec3 ezOpenXR::ConvertPosition(const XrVector3f& pos)
+{
+  return {pos.x, pos.z, pos.y};
+}
+
+ezMat4 ezOpenXR::ConvertPoseToMatrix(const XrPosef& pose)
+{
+  ezMat4 m;
+  ezMat3 rot = ConvertOrientation(pose.orientation).GetAsMat3();
+  ezVec3 pos = ConvertPosition(pose.position);
+  m.SetTransformationMatrix(rot, pos);
+  return m;
 }
 
 //

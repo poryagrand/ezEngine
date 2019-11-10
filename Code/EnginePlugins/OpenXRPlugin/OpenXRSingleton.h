@@ -13,7 +13,10 @@
 struct ezGameApplicationExecutionEvent;
 typedef ezTypedResourceHandle<class ezShaderResource> ezShaderResourceHandle;
 
-class EZ_OPENXRPLUGIN_DLL ezOpenXR : public ezVRInterface
+EZ_DEFINE_AS_POD_TYPE(XrSwapchainImageD3D11KHR);
+EZ_DEFINE_AS_POD_TYPE(XrViewConfigurationView);
+
+ class EZ_OPENXRPLUGIN_DLL ezOpenXR : public ezVRInterface
 {
   EZ_DECLARE_SINGLETON_OF_INTERFACE(ezOpenXR, ezVRInterface);
 
@@ -41,14 +44,28 @@ public:
   virtual ezGALTextureHandle GetCompanionViewRenderTarget() const override;
 
 private:
+  struct Swapchain
+  {
+    XrSwapchain handle = nullptr;
+    int64_t format = 0;
+    ezUInt32 imageCount = 0;
+    XrSwapchainImageBaseHeader* images = nullptr;
+    uint32_t imageIndex = 0;
+  };
+  enum class SwapchainType
+  {
+    Color,
+    Depth,
+  };
+
   XrResult InitSystem();
   void DeinitSystem();
   XrResult InitSession();
   void DeinitSession();
   XrResult InitGraphicsPlugin();
   void DeinitGraphicsPlugin();
-  XrResult SelectColorSwapchainFormat(int64_t& format);
-  XrSwapchainImageBaseHeader* CreateSwapchainImages(uint32_t viewIndex, uint32_t imageCount);
+  XrResult SelectSwapchainFormat(int64_t& colorFormat, int64_t& depthFormat);
+  XrSwapchainImageBaseHeader* CreateSwapchainImages(Swapchain& swapchain, SwapchainType type);
   XrResult InitSwapChain();
   void DeinitSwapChain();
 
@@ -75,8 +92,10 @@ private:
   //ezMat4 GetHMDEyePose(vr::Hmd_Eye nEye) const;
   //ezString GetTrackedDeviceString(vr::TrackedDeviceIndex_t unDevice, vr::TrackedDeviceProperty prop,
   //                                vr::TrackedPropertyError* peError = nullptr) const;
+  static ezQuat ConvertOrientation(const XrQuaternionf& q);
+  static ezVec3 ConvertPosition(const XrVector3f& pos);
 
-  //static ezMat4 ConvertSteamVRMatrix(const vr::HmdMatrix34_t& matPose);
+  static ezMat4 ConvertPoseToMatrix(const XrPosef& pose);
   //static ezVec3 ConvertSteamVRVector(const vr::HmdVector3_t& vector);
 
 private:
@@ -89,6 +108,7 @@ private:
 
   // System
   uint64_t m_systemId = XR_NULL_SYSTEM_ID;
+  bool m_supportsDepth = false;
 
   // Session
   XrSession m_session = nullptr;
@@ -102,21 +122,19 @@ private:
   XrGraphicsBindingD3D11KHR m_xrGraphicsBindingD3D11{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
   XrFormFactor m_formFactor{XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
   XrViewConfigurationType m_primaryViewConfigurationType{XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-  ezHybridArray<XrSwapchainImageD3D11KHR, 3> m_swapChainImagesD3D11[2];
+  ezHybridArray<XrSwapchainImageD3D11KHR, 3> m_colorSwapChainImagesD3D11;
+  ezHybridArray<XrSwapchainImageD3D11KHR, 3> m_depthSwapChainImagesD3D11;
 
   // Swapchain
-  int64_t m_colorSwapchainFormat = -1;
-  XrViewConfigurationView m_primaryConfigView[2];
-  XrSwapchain m_swapchain[2] = {nullptr, nullptr};
-  ezUInt32 m_swapchainWidth = 0;
-  ezUInt32 m_swapchainHeight = 0;
-  uint32_t m_imageCount = 0;
-  XrSwapchainImageBaseHeader* m_swapChainImages[2] = {nullptr, nullptr};
-  uint32_t m_swapchainImageIndex[2] = {0, 0};
+  XrViewConfigurationView m_primaryConfigView;
+  Swapchain m_colorSwapchain;
+  Swapchain m_depthSwapchain;
+  
   // Views
   XrView m_views[2];
   XrCompositionLayerProjection m_layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
   XrCompositionLayerProjectionView m_projectionLayerViews[2];
+  XrCompositionLayerDepthInfoKHR m_depthLayerViews[2];
 
   // State
   bool m_sessionRunning = false;
@@ -130,14 +148,13 @@ private:
   XrFrameWaitInfo m_frameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
   XrFrameState m_frameState{XR_TYPE_FRAME_STATE};
   XrFrameBeginInfo m_frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
-  XrSessionState m_sessionState{XR_SESSION_STATE_UNKNOWN};
 
-
+  // XR interface state
   ezHMDInfo m_Info;
-  //ezVRDeviceState m_DeviceState[vr::k_unMaxTrackedDeviceCount];
-  ezInt8 m_iLeftControllerDeviceID = -1;
-  ezInt8 m_iRightControllerDeviceID = -1;
   ezEvent<const ezVRDeviceEvent&> m_DeviceEvents;
+  ezVRDeviceState m_DeviceState[3];//Hard-coded for now
+  const ezInt8 m_iLeftControllerDeviceID = 1;
+  const ezInt8 m_iRightControllerDeviceID = 2;
 
   ezWorld* m_pWorld = nullptr;
   ezCamera* m_pCameraToSynchronize = nullptr;
