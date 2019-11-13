@@ -55,6 +55,7 @@ private:
 
 protected:
   friend class ezRenderContext;
+  friend class ezDebugRenderer;
 
   const ezGALTextureHandle& GetGALTexture() const { return m_hGALTexture[m_uiLoadedTextures - 1]; }
   const ezGALSamplerStateHandle& GetGALSamplerState() const { return m_hSamplerState; }
