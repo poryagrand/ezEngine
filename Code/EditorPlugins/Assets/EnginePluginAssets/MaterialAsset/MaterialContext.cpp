@@ -56,7 +56,8 @@ void ezMaterialContext::OnInitialize()
   {
     const char* szMeshBufferName = "DefaultMaterialPreviewMeshBuffer";
 
-    ezMeshBufferResourceHandle hMeshBuffer;
+    ezMeshBufferResourceHandle hMeshBuffer = ezResourceManager::GetExistingResource<ezMeshBufferResource>(szMeshBufferName);
+    if (!hMeshBuffer.IsValid())
     {
       // Build geometry
       ezGeometry geom;
