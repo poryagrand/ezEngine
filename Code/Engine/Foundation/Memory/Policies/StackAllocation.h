@@ -19,10 +19,10 @@ namespace ezMemoryPolicies
     };
 
     EZ_FORCE_INLINE ezStackAllocation(ezAllocatorBase* pParent)
-        : m_pParent(pParent)
-        , m_uiCurrentBucketIndex(0)
-        , m_uiCurrentBucketSize(4096)
-        , m_pNextAllocation(nullptr)
+      : m_pParent(pParent)
+      , m_uiCurrentBucketIndex(0)
+      , m_uiCurrentBucketSize(4096)
+      , m_pNextAllocation(nullptr)
     {
     }
 
@@ -70,7 +70,7 @@ namespace ezMemoryPolicies
         {
         AllocNewBucket:
           m_currentBucket =
-              ezArrayPtr<ezUInt8>(static_cast<ezUInt8*>(m_pParent->Allocate(m_uiCurrentBucketSize, Alignment)), m_uiCurrentBucketSize);
+            ezArrayPtr<ezUInt8>(static_cast<ezUInt8*>(m_pParent->Allocate(m_uiCurrentBucketSize, Alignment)), m_uiCurrentBucketSize);
           m_buckets.ExpandAndGetRef().memory = m_currentBucket;
           m_uiCurrentBucketSize *= 2;
         }
@@ -124,6 +124,16 @@ namespace ezMemoryPolicies
       m_pNextAllocation = m_currentBucket.GetPtr();
     }
 
+    EZ_FORCE_INLINE void FillStats(ezAllocatorBase::Stats& stats)
+    {
+      stats.m_uiNumAllocations = m_buckets.GetCount();
+
+      for (auto& bucket : m_buckets)
+      {
+        stats.m_uiAllocationSize += bucket.memory.GetCount();
+      }
+    }
+
     EZ_ALWAYS_INLINE ezAllocatorBase* GetParent() const { return m_pParent; }
 
   private:
@@ -140,5 +150,4 @@ namespace ezMemoryPolicies
     ezUInt8* m_pNextAllocation;
     ezHybridArray<Bucket, 4> m_buckets;
   };
-}
-
+} // namespace ezMemoryPolicies

@@ -5,12 +5,12 @@
 #include <Foundation/Memory/Allocator.h>
 #include <Foundation/Memory/Policies/HeapAllocation.h>
 #include <Foundation/Strings/String.h>
+#include <Foundation/System/StackTracer.h>
 #include <Foundation/Threading/Lock.h>
 #include <Foundation/Threading/Mutex.h>
-#include <Foundation/System/StackTracer.h>
 
 #if EZ_ENABLED(EZ_PLATFORM_WINDOWS)
-#include <Foundation/Basics/Platform/Win/IncludeWindows.h>
+#  include <Foundation/Basics/Platform/Win/IncludeWindows.h>
 #endif
 
 namespace
@@ -106,7 +106,7 @@ namespace
 
     PrintHelper("--------------------------------------------------------------------\n\n");
   }
-}
+} // namespace
 
 // Iterator
 #define CAST_ITER(ptr) static_cast<TrackerData::AllocatorTable::Iterator*>(ptr)
@@ -177,8 +177,9 @@ void ezMemoryTracker::DeregisterAllocator(ezAllocatorId allocatorId)
   EZ_LOCK(*s_pTrackerData);
 
   const AllocatorData& data = s_pTrackerData->m_AllocatorData[allocatorId];
-  ezUInt64 uiLiveAllocations = data.m_Stats.m_uiNumAllocations - data.m_Stats.m_uiNumDeallocations;
-  if (uiLiveAllocations != 0 || data.m_Stats.m_uiAllocationSize != 0)
+
+  ezUInt32 uiLiveAllocations = data.m_Allocations.GetCount();
+  if (uiLiveAllocations != 0)
   {
     for (auto it = data.m_Allocations.GetIterator(); it.IsValid(); ++it)
     {
@@ -254,6 +255,13 @@ void ezMemoryTracker::RemoveAllAllocations(ezAllocatorId allocatorId)
     EZ_DELETE_ARRAY(s_pTrackerDataAllocator, info.GetStackTrace());
   }
   data.m_Allocations.Clear();
+}
+
+void ezMemoryTracker::SetAllocatorStats(ezAllocatorId allocatorId, const ezAllocatorBase::Stats& stats)
+{
+  EZ_LOCK(*s_pTrackerData);
+
+  s_pTrackerData->m_AllocatorData[allocatorId].m_Stats = stats;
 }
 
 // static
@@ -389,10 +397,10 @@ void ezMemoryTracker::DumpMemoryLeaks()
   {
     char szBuffer[512];
     ezStringUtils::snprintf(szBuffer, EZ_ARRAY_SIZE(szBuffer),
-                            "\n--------------------------------------------------------------------\n"
-                            "Found %llu root memory leak(s)."
-                            "\n--------------------------------------------------------------------\n\n",
-                            uiNumLeaks);
+      "\n--------------------------------------------------------------------\n"
+      "Found %llu root memory leak(s)."
+      "\n--------------------------------------------------------------------\n\n",
+      uiNumLeaks);
 
     PrintHelper(szBuffer);
 
@@ -409,4 +417,3 @@ ezMemoryTracker::Iterator ezMemoryTracker::GetIterator()
 
 
 EZ_STATICLINK_FILE(Foundation, Foundation_Memory_Implementation_MemoryTracker);
-

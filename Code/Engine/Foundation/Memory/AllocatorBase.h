@@ -25,11 +25,9 @@ public:
   {
     EZ_DECLARE_POD_TYPE();
 
-    EZ_ALWAYS_INLINE Stats() { ezMemoryUtils::ZeroFill(this, 1); }
-
-    ezUInt64 m_uiNumAllocations;   ///< total number of allocations
-    ezUInt64 m_uiNumDeallocations; ///< total number of deallocations
-    ezUInt64 m_uiAllocationSize;   ///< total allocation size in bytes
+    ezUInt64 m_uiNumAllocations = 0;   ///< total number of allocations
+    ezUInt64 m_uiNumDeallocations = 0; ///< total number of deallocations
+    ezUInt64 m_uiAllocationSize = 0;   ///< total allocation size in bytes
   };
 
   ezAllocatorBase();

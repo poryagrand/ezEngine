@@ -9,7 +9,7 @@
 
 ezDuktapeContext::ezDuktapeContext(const char* szWrapperName)
   : ezDuktapeHelper(nullptr)
-  , m_Allocator(szWrapperName, ezFoundation::GetDefaultAllocator())
+  , m_Allocator(szWrapperName)
 
 {
   InitializeContext();
