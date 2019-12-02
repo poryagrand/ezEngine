@@ -61,6 +61,7 @@ namespace ezProcGenInternal
 
   struct EZ_PROCGENPLUGIN_DLL GraphSharedDataBase : public ezRefCounted
   {
+    virtual ~GraphSharedDataBase();
   };
 
   struct Output : public ezRefCounted

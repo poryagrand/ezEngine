@@ -13,6 +13,7 @@ EZ_END_STATIC_REFLECTED_ENUM;
 
 namespace ezProcGenInternal
 {
+  GraphSharedDataBase::~GraphSharedDataBase() = default;
   Output::~Output() = default;
 
   ezHashedString ExpressionInputs::s_sPositionX = ezMakeHashedString("PositionX");
