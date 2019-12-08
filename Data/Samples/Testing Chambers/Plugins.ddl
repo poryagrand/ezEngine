@@ -48,6 +48,12 @@ Plugin
 }
 Plugin
 {
+	string %Path{"ezOpenXRPlugin"}
+	bool %LoadCopy{false}
+	string %DependencyOf{"<manual>"}
+}
+Plugin
+{
 	string %Path{"ezParticlePlugin"}
 	bool %LoadCopy{false}
 	string %DependencyOf{"<manual>","EditorPluginParticle"}
@@ -72,7 +78,13 @@ Plugin
 }
 Plugin
 {
+	string %Path{"ezSampleGamePlugin"}
+	bool %LoadCopy{false}
+	string %DependencyOf{"<manual>"}
+}
+Plugin
+{
 	string %Path{"ezTypeScriptPlugin"}
 	bool %LoadCopy{false}
-	string %DependencyOf{"<manual>","EditorPluginTypeScript"}
+	string %DependencyOf{"EditorPluginTypeScript"}
 }

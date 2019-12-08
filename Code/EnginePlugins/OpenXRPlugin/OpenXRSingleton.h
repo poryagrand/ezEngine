@@ -35,8 +35,14 @@ public:
   virtual const ezVRDeviceState& GetDeviceState(ezVRDeviceID uiDeviceID) const override;
   virtual ezEvent<const ezVRDeviceEvent&>& DeviceEvents() override;
 
-  virtual ezViewHandle CreateVRView(const ezRenderPipelineResourceHandle& hRenderPipeline, ezCamera* pCamera,
-                                    ezGALMSAASampleCount::Enum msaaCount) override;
+  virtual ezUniquePtr<ezActor> CreateActor(
+    ezView* pView, ezGALMSAASampleCount::Enum msaaCount = ezGALMSAASampleCount::None) override;
+
+ /* virtual ezUniquePtr<ezVRActor> CreateActor(const ezRenderPipelineResourceHandle& hRenderPipeline, ezCamera*
+     pCamera, ezGALMSAASampleCount::Enum msaaCount = ezGALMSAASampleCount::None) override;
+
+     virtual ezViewHandle CreateVRView(const ezRenderPipelineResourceHandle& hRenderPipeline, ezCamera* pCamera,
+                                       ezGALMSAASampleCount::Enum msaaCount) override;*/
   virtual ezViewHandle GetVRView() const override;
   virtual bool DestroyVRView() override;
   virtual bool SupportsCompanionView() override;
@@ -160,7 +166,7 @@ private:
   ezCamera* m_pCameraToSynchronize = nullptr;
   ezEnum<ezVRStageSpace> m_StageSpace;
 
-  ezCamera m_VRCamera;
+  //ezCamera m_VRCamera;
   ezUInt32 m_uiSettingsModificationCounter = 0;
   ezViewHandle m_hView;
   ezGALRenderTargetSetup m_RenderTargetSetup;
