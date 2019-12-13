@@ -166,7 +166,7 @@ private:
   ezCamera* m_pCameraToSynchronize = nullptr;
   ezEnum<ezVRStageSpace> m_StageSpace;
 
-  //ezCamera m_VRCamera;
+  ezCamera m_VRCamera;
   ezUInt32 m_uiSettingsModificationCounter = 0;
   ezViewHandle m_hView;
   ezGALRenderTargetSetup m_RenderTargetSetup;

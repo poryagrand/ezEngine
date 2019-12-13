@@ -251,6 +251,7 @@ ezUniquePtr<ezActor> ezOpenXR::CreateActor(
 
   EZ_ASSERT_DEV(pView->GetCamera() != nullptr, "The provided view requires a camera to be set.");
   SetHMDCamera(pView->GetCamera());
+  pView->SetCamera(&m_VRCamera);
 
   ezUniquePtr<ezActor> pActor = EZ_DEFAULT_NEW(ezActor, "OpenXR", this);
 
@@ -747,7 +748,7 @@ void ezOpenXR::GameApplicationEventHandler(const ezGameApplicationExecutionEvent
       const ezGALTextureDX11* pSource = static_cast<const ezGALTextureDX11*>(pDevice->GetTexture(m_hColorRT));
       ID3D11Resource* dxSource = pSource->GetDXTexture();
       pGALContext->GetDXContext()->CopyResource(
-        dxSource, m_colorSwapChainImagesD3D11[m_colorSwapchain.imageIndex].texture);
+        m_colorSwapChainImagesD3D11[m_colorSwapchain.imageIndex].texture, dxSource);
     }
     else
     {
@@ -957,16 +958,18 @@ void ezOpenXR::UpdatePoses()
   {
     const float fAspectRatio = (float)m_Info.m_vEyeRenderTargetSize.width / (float)m_Info.m_vEyeRenderTargetSize.height;
     auto CreateProjection = [](const XrView& view, ezCamera* cam) {
-      return ezGraphicsUtils::CreatePerspectiveProjectionMatrix(ezMath::Tan(ezAngle::Radian(view.fov.angleLeft)),
-        ezMath::Tan(ezAngle::Radian(view.fov.angleRight)), ezMath::Tan(ezAngle::Radian(view.fov.angleDown)),
-        ezMath::Tan(ezAngle::Radian(view.fov.angleUp)), cam->GetNearPlane(), cam->GetFarPlane());
+      return ezGraphicsUtils::CreatePerspectiveProjectionMatrix(
+        ezMath::Tan(ezAngle::Radian(view.fov.angleLeft)) * cam->GetNearPlane(),
+        ezMath::Tan(ezAngle::Radian(view.fov.angleRight)) * cam->GetNearPlane(),
+        ezMath::Tan(ezAngle::Radian(view.fov.angleDown)) * cam->GetNearPlane(),
+        ezMath::Tan(ezAngle::Radian(view.fov.angleUp)) * cam->GetNearPlane(), cam->GetNearPlane(), cam->GetFarPlane());
     };
 
     // Update projection with newest near/ far values. If not sync camera is set, just use the last value from VR
     // camera.
     const ezMat4 projLeft = CreateProjection(m_views[0], m_pCameraToSynchronize);
     const ezMat4 projRight = CreateProjection(m_views[1], m_pCameraToSynchronize);
-    m_pCameraToSynchronize->SetStereoProjection(projLeft, projRight, fAspectRatio);
+    m_VRCamera.SetStereoProjection(projLeft, projRight, fAspectRatio);
   }
 
   // Update camera view
@@ -993,14 +996,18 @@ void ezOpenXR::UpdatePoses()
       }
     }
 
+    // EZ Forward is +X, need to add this to align the forward projection
+    ezMat4 viewMatrix = ezGraphicsUtils::CreateLookAtViewMatrix(ezVec3::ZeroVector(), ezVec3(1, 0, 0), ezVec3(0, 0, 1));
+
+    //ezLog::Info("Pos: x={} y={} z={}", m_views[0].pose.position.x, m_views[0].pose.position.y, m_views[0].pose.position.z);
     // First compute XR space center view matrix (for device state pose)
-    const ezMat4 viewLeft = ConvertPoseToMatrix(m_views[0].pose);
-    const ezMat4 viewRight = ConvertPoseToMatrix(m_views[1].pose);
-    m_pCameraToSynchronize->SetViewMatrix(viewLeft, ezCameraEye::Left);
-    m_pCameraToSynchronize->SetViewMatrix(viewRight, ezCameraEye::Right);
-    cameraCenterView = ezGraphicsUtils::CreateViewMatrix(m_pCameraToSynchronize->GetCenterPosition(),
-      m_pCameraToSynchronize->GetCenterDirForwards(), m_pCameraToSynchronize->GetCenterDirRight(),
-      m_pCameraToSynchronize->GetCenterDirUp());
+    const ezMat4 viewLeft = ConvertPoseToMatrix(m_views[0].pose).GetInverse();
+    const ezMat4 viewRight = ConvertPoseToMatrix(m_views[1].pose).GetInverse();
+    m_VRCamera.SetViewMatrix(viewLeft, ezCameraEye::Left);
+    m_VRCamera.SetViewMatrix(viewRight, ezCameraEye::Right);
+    cameraCenterView = ezGraphicsUtils::CreateViewMatrix(m_VRCamera.GetCenterPosition(),
+      m_VRCamera.GetCenterDirForwards(), m_VRCamera.GetCenterDirRight(),
+      m_VRCamera.GetCenterDirUp());
 
     // Then set shifted view matrix
     const ezMat4 mAdd = add.GetAsMat4();
@@ -1009,16 +1016,19 @@ void ezOpenXR::UpdatePoses()
 
     const ezMat4 mViewTransformLeft = viewLeft * mShiftedPos;
     const ezMat4 mViewTransformRight = viewRight * mShiftedPos;
-    m_pCameraToSynchronize->SetViewMatrix(mViewTransformLeft, ezCameraEye::Left);
-    m_pCameraToSynchronize->SetViewMatrix(mViewTransformRight, ezCameraEye::Right);
+    m_VRCamera.SetViewMatrix(viewMatrix * mViewTransformLeft, ezCameraEye::Left);
+    m_VRCamera.SetViewMatrix(viewMatrix * mViewTransformRight, ezCameraEye::Right);
   }
 
+  //ezLog::Info("Pos: {}", m_DeviceState[0].m_mPose.GetTranslationVector());
+  //ezLog::Info("Center: {}", m_VRCamera.GetCenterPosition());
   // Update state
   m_DeviceState[0].m_mPose = cameraCenterView;
   m_DeviceState[0].m_vPosition = m_DeviceState[0].m_mPose.GetTranslationVector();
   m_DeviceState[0].m_qRotation.SetFromMat3(m_DeviceState[0].m_mPose.GetRotationalPart());
   m_DeviceState[0].m_vVelocity.SetZero();
   m_DeviceState[0].m_vAngularVelocity.SetZero();
+  m_DeviceState[0].m_Type = ezVRDeviceState::Type::HMD;
   // m_hmdState.m_Type = ezVRDeviceState::Type::HMD;
   m_DeviceState[0].m_bPoseIsValid = true;
   m_DeviceState[0].m_bDeviceIsConnected = true;
@@ -1030,8 +1040,8 @@ void ezOpenXR::UpdatePoses()
     // put the camera orientation into the sound listener and enable the listener override mode
     if (ezSoundInterface* pSoundInterface = ezSingletonRegistry::GetSingletonInstance<ezSoundInterface>())
     {
-      pSoundInterface->SetListener(-1, m_pCameraToSynchronize->GetCenterPosition(),
-        m_pCameraToSynchronize->GetCenterDirForwards(), m_pCameraToSynchronize->GetCenterDirUp(), ezVec3::ZeroVector());
+      pSoundInterface->SetListener(-1, m_VRCamera.GetCenterPosition(),
+        m_VRCamera.GetCenterDirForwards(), m_VRCamera.GetCenterDirUp(), ezVec3::ZeroVector());
     }
   }
 }
@@ -1069,8 +1079,8 @@ void ezOpenXR::SetHMDCamera(ezCamera* pCamera)
   if (m_pCameraToSynchronize)
   {
     m_uiSettingsModificationCounter = m_pCameraToSynchronize->GetSettingsModificationCounter() + 1;
-    // m_VRCamera = *m_pCameraToSynchronize;
-    m_pCameraToSynchronize->SetCameraMode(
+    m_VRCamera = *m_pCameraToSynchronize;
+    m_VRCamera.SetCameraMode(
       ezCameraMode::Stereo, 90.0f, m_pCameraToSynchronize->GetNearPlane(), m_pCameraToSynchronize->GetFarPlane());
     UpdateCamera();
   }
@@ -1105,28 +1115,29 @@ XrPosef ezOpenXR::ConvertTransform(const ezTransform& tr)
 
 XrQuaternionf ezOpenXR::ConvertOrientation(const ezQuat& q)
 {
-  return {q.v.x, q.v.z, q.v.y, -q.w};
+  return {q.v.y, q.v.z, -q.v.x, -q.w};
 }
 
 XrVector3f ezOpenXR::ConvertPosition(const ezVec3& pos)
 {
-  return {pos.x, pos.z, pos.y};
+  return {pos.y, pos.z, -pos.x};
 }
 
 ezQuat ezOpenXR::ConvertOrientation(const XrQuaternionf& q)
 {
-  return {q.x, q.z, q.y, -q.w};
+  return {-q.z, q.x, q.y, -q.w};
 }
 
 ezVec3 ezOpenXR::ConvertPosition(const XrVector3f& pos)
 {
-  return {pos.x, pos.z, pos.y};
+  return {-pos.z, pos.x, pos.y};
 }
 
 ezMat4 ezOpenXR::ConvertPoseToMatrix(const XrPosef& pose)
 {
   ezMat4 m;
   ezMat3 rot = ConvertOrientation(pose.orientation).GetAsMat3();
+  //rot = rot.IdentityMatrix();
   ezVec3 pos = ConvertPosition(pose.position);
   m.SetTransformationMatrix(rot, pos);
   return m;
